@@ -1,0 +1,84 @@
+
+sudo yum update -y
+curl -LO https://releases.hashicorp.com/terraform/1.3.7/terraform_1.3.7_linux_amd64.zip
+sudo yum install -y unzip
+unzip terraform_1.3.7_linux_amd64.zip
+sudo mv terraform /usr/local/bin/
+terraform -version
+
+
+mkdir terraform-deployment
+cd terraform-deployment
+
+
+sudo nano main.tf
+
+
+/********************************CODE**********************************************/
+provider "aws" {
+  region = "us-west-2"
+}
+
+resource "aws_instance" "web" {
+  ami           = "ami-0c55b159cbfafe1f0"  # Use an appropriate AMI ID for your region
+  instance_type = "t2.micro"
+
+  tags = {
+    Name = "HTTP Service"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "sudo yum update -y",
+      "sudo yum install -y python3",
+      "sudo yum install -y python3-pip",
+      "pip3 install flask boto3",
+      "echo 'from flask import Flask, jsonify' > app.py",
+      "echo 'import boto3' >> app.py",
+      "echo 'app = Flask(__name__)' >> app.py",
+      "echo 's3 = boto3.client(\"s3\")' >> app.py",
+      "echo 'BUCKET_NAME = \"your-bucket/-name\"' >> app.py",
+      "echo '@app.route(\"/list-bucket-content/\", defaults={\"path\": \"\"})' >> app.py",
+      "echo '@app.route(\"/list-bucket-content/<path:path>\")' >> app.py",
+      "echo 'def list_bucket_content(path):' >> app.py",
+      "echo 'try:' >> app.py",
+      "echo 'response = s3.list_objects_v2(Bucket=BUCKET_NAME, Prefix=path)' >> app.py",
+      "echo 'contents = [item[\"Key\"] for item in response.get(\"Contents\", [])]' >> app.py",
+      "echo 'return jsonify({\"content\": contents})' >> app.py",
+      "echo 'except Exception as e:' >> app.py",
+      "echo 'return jsonify({\"error\": str(e)}), 400' >> app.py",
+      "echo 'app.run(host=\"0.0.0.0\", port=5000)' >> app.py",
+      "python3 app.py &"
+    ]
+  }
+}
+
+resource "aws_security_group" "web_sg" {
+  name        = "web_sg"
+  description = "Allow inbound traffic on port 5000"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description = "Allow inbound traffic"
+    from_port   = 5000
+    to_port     = 5000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_s3_bucket" "bucket" {
+  bucket = "your-bucket-name"
+}
+
+/******************************************************/
+terraform init
+terraform apply
+
